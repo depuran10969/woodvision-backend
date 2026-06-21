@@ -29,6 +29,7 @@ feature_extractor = Model(
 
 # =========================
 # LABEL JENIS KAYU
+# Urutan harus sama dengan output model CNN
 # =========================
 jenis_kayu = [
     "Jati",
@@ -39,23 +40,39 @@ jenis_kayu = [
 ]
 
 # =========================
-# MAPPING UMUR BERDASARKAN HASIL RF
+# LABEL KATEGORI UMUR DARI RANDOM FOREST
+# 0 = Muda, 1 = Sedang, 2 = Tua
 # =========================
-# 0 = Muda
-# 1 = Sedang
-# 2 = Tua
-umur_mapping = {
-    0: {
-        "kategori": "Muda",
-        "rentang": "10-20 Tahun"
+kategori_umur_mapping = {
+    0: "Muda",
+    1: "Sedang",
+    2: "Tua"
+}
+
+# =========================
+# ESTIMASI UMUR FINAL BERDASARKAN JENIS KAYU
+# Ini yang akan ditampilkan di aplikasi
+# =========================
+estimasi_umur_kayu = {
+    "Jati": {
+        "kategori_default": "Tua",
+        "estimasi": "40-80 Tahun"
     },
-    1: {
-        "kategori": "Sedang",
-        "rentang": "15-30 Tahun"
+    "Meranti": {
+        "kategori_default": "Sedang",
+        "estimasi": "15-30 Tahun"
     },
-    2: {
-        "kategori": "Tua",
-        "rentang": "35-50 Tahun"
+    "Seru": {
+        "kategori_default": "Muda",
+        "estimasi": "10-20 Tahun"
+    },
+    "Tembesu": {
+        "kategori_default": "Tua",
+        "estimasi": "35-50 Tahun"
+    },
+    "Unglen": {
+        "kategori_default": "Tua",
+        "estimasi": "30-50 Tahun"
     }
 }
 
@@ -82,11 +99,12 @@ def predict():
 
         file = request.files["image"]
 
-        # Buka gambar
+        # =========================
+        # PREPROCESS IMAGE
+        # =========================
         img = Image.open(file).convert("RGB")
         img = img.resize((224, 224))
 
-        # Preprocessing
         img_array = np.array(img).astype("float32") / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
@@ -99,21 +117,36 @@ def predict():
         nama_kayu = jenis_kayu[kelas_idx]
 
         # =========================
-        # PREDIKSI UMUR DENGAN RANDOM FOREST
+        # PREDIKSI KATEGORI UMUR DENGAN RANDOM FOREST
         # =========================
         fitur = feature_extractor.predict(img_array, verbose=0)
         umur_idx = int(rf_model.predict(fitur)[0])
 
-        info_umur = umur_mapping.get(
-            umur_idx,
-            {"kategori": "-", "rentang": "-"}
+        kategori_umur_rf = kategori_umur_mapping.get(umur_idx, "-")
+
+        # =========================
+        # ESTIMASI UMUR FINAL BERDASARKAN JENIS KAYU
+        # =========================
+        info_estimasi = estimasi_umur_kayu.get(
+            nama_kayu,
+            {
+                "kategori_default": kategori_umur_rf,
+                "estimasi": "-"
+            }
         )
+
+        # Kalau mau kategori umur tetap mengikuti RF:
+        kategori_final = kategori_umur_rf
+
+        # Kalau RF error / tidak cocok, fallback ke kategori default kayu
+        if kategori_final == "-" or kategori_final == "":
+            kategori_final = info_estimasi["kategori_default"]
 
         return jsonify({
             "jenis_kayu": nama_kayu,
             "confidence": f"{round(confidence * 100, 2)}%",
-            "kategori_umur": info_umur["kategori"],
-            "rentang_umur": info_umur["rentang"]
+            "kategori_umur": kategori_final,
+            "estimasi_umur": info_estimasi["estimasi"]
         })
 
     except Exception as e:
