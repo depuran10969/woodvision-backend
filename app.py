@@ -21,7 +21,6 @@ RF_MODEL_PATH = os.path.join(BASE_DIR, "random_forest_umur.pkl")
 cnn_model = load_model(CNN_MODEL_PATH)
 rf_model = joblib.load(RF_MODEL_PATH)
 
-# Feature extractor untuk Random Forest
 feature_extractor = Model(
     inputs=cnn_model.input,
     outputs=cnn_model.layers[-2].output
@@ -29,7 +28,7 @@ feature_extractor = Model(
 
 # =========================
 # LABEL JENIS KAYU
-# Urutan harus sama dengan output model CNN
+# URUTAN HARUS SESUAI OUTPUT CNN
 # =========================
 jenis_kayu = [
     "Jati",
@@ -40,8 +39,7 @@ jenis_kayu = [
 ]
 
 # =========================
-# LABEL KATEGORI UMUR DARI RANDOM FOREST
-# 0 = Muda, 1 = Sedang, 2 = Tua
+# LABEL KATEGORI UMUR DARI RF
 # =========================
 kategori_umur_mapping = {
     0: "Muda",
@@ -50,8 +48,7 @@ kategori_umur_mapping = {
 }
 
 # =========================
-# ESTIMASI UMUR FINAL BERDASARKAN JENIS KAYU
-# Ini yang akan ditampilkan di aplikasi
+# ESTIMASI UMUR FINAL PER JENIS KAYU
 # =========================
 estimasi_umur_kayu = {
     "Jati": {
@@ -77,7 +74,12 @@ estimasi_umur_kayu = {
 }
 
 # =========================
-# HOME / HEALTH CHECK
+# CONFIDENCE THRESHOLD
+# =========================
+CONFIDENCE_THRESHOLD = 0.85   # 85%
+
+# =========================
+# HOME
 # =========================
 @app.route("/", methods=["GET"])
 def home():
@@ -94,6 +96,7 @@ def predict():
     try:
         if "image" not in request.files:
             return jsonify({
+                "success": False,
                 "error": "File gambar tidak ditemukan"
             }), 400
 
@@ -109,7 +112,7 @@ def predict():
         img_array = np.expand_dims(img_array, axis=0)
 
         # =========================
-        # PREDIKSI JENIS KAYU DENGAN CNN
+        # PREDIKSI CNN
         # =========================
         pred = cnn_model.predict(img_array, verbose=0)
         kelas_idx = int(np.argmax(pred))
@@ -117,16 +120,26 @@ def predict():
         nama_kayu = jenis_kayu[kelas_idx]
 
         # =========================
-        # PREDIKSI KATEGORI UMUR DENGAN RANDOM FOREST
+        # UNKNOWN DETECTION BERDASARKAN THRESHOLD
+        # =========================
+        if confidence < CONFIDENCE_THRESHOLD:
+            return jsonify({
+                "success": False,
+                "jenis_kayu": "Tidak dikenali",
+                "confidence": f"{round(confidence * 100, 2)}%",
+                "kategori_umur": "-",
+                "estimasi_umur": "-",
+                "message": "Gambar tidak dikenali sebagai kayu dataset. Gunakan citra permukaan kayu yang lebih jelas."
+            }), 200
+
+        # =========================
+        # RANDOM FOREST UNTUK KATEGORI UMUR
         # =========================
         fitur = feature_extractor.predict(img_array, verbose=0)
         umur_idx = int(rf_model.predict(fitur)[0])
 
         kategori_umur_rf = kategori_umur_mapping.get(umur_idx, "-")
 
-        # =========================
-        # ESTIMASI UMUR FINAL BERDASARKAN JENIS KAYU
-        # =========================
         info_estimasi = estimasi_umur_kayu.get(
             nama_kayu,
             {
@@ -135,22 +148,22 @@ def predict():
             }
         )
 
-        # Kalau mau kategori umur tetap mengikuti RF:
         kategori_final = kategori_umur_rf
-
-        # Kalau RF error / tidak cocok, fallback ke kategori default kayu
         if kategori_final == "-" or kategori_final == "":
             kategori_final = info_estimasi["kategori_default"]
 
         return jsonify({
+            "success": True,
             "jenis_kayu": nama_kayu,
             "confidence": f"{round(confidence * 100, 2)}%",
             "kategori_umur": kategori_final,
-            "estimasi_umur": info_estimasi["estimasi"]
+            "estimasi_umur": info_estimasi["estimasi"],
+            "message": "Prediksi berhasil"
         })
 
     except Exception as e:
         return jsonify({
+            "success": False,
             "error": str(e)
         }), 500
 
